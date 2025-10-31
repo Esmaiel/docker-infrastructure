@@ -1,0 +1,145 @@
+services:
+
+  postgres:
+    image: 'postgres:latest'
+    container_name: postgres
+    restart: always
+    ports:
+      - 5432:5432
+    environment:
+      POSTGRES_USER: ${POSTGRES_USERNAME}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      # Mount the entire postgres host directory at /var/lib/postgresql so
+      # PostgreSQL can create major-version-specific subdirectories (e.g. /var/lib/postgresql/15/).
+      # This arrangement allows in-place upgrades with `pg_upgrade --link` across image
+      # versions without crossing mount boundaries.
+      #
+      # NOTE: If you already have data mapped at /var/lib/postgresql/data (older images),
+      # do NOT simply point the volume at /var/lib/postgresql without planning a migration.
+      # See POSTGRES_UPGRADE.md in this folder for backup and pg_upgrade guidance.
+      - postgres_data:/var/lib/postgresql
+    networks:
+      - infra_network
+
+  redis:
+    image: redis:latest
+    container_name: redis
+    restart: always
+    ports:
+      - "6379:6379"
+    command:
+    - /bin/sh
+    - -c
+    # - Double dollars, so that the variable is not expanded by Docker Compose
+    # - Surround by quotes, so that the shell does not split the password
+    # - The ${variable:?message} syntax causes shell to exit with a non-zero
+    #   code and print a message, when the variable is not set or empty
+    - redis-server --requirepass "$${REDIS_PASSWORD:?REDIS_PASSWORD variable is not set}"
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_PORT: 6379
+      REDIS_DATABASES: 16
+    volumes:
+      - redis_data:/data
+    networks:
+      - infra_network
+
+
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2025-latest
+    container_name: sqlserver
+    restart: always
+    user: root
+    ports:
+      - "1433:1433"
+    environment:
+      MSSQL_SA_PASSWORD: ${SQLSERVER_SA_PASSWORD}
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: "Developer"
+    volumes:
+      - sqlserver_data:/var/opt/mssql/data
+    networks:
+      - infra_network
+
+
+  mongo:
+    image: mongo:latest
+    restart: always
+    ports:
+      - 27017:27017
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+    volumes:
+      - mongo_configdb:/data/configdb
+      - mongo_data:/data/db
+    networks:
+      - infra_network
+
+
+
+  kafka:
+    image: confluentinc/cp-kafka:latest
+    hostname: kafka
+    container_name: kafka
+    ports:
+      - "9092:9092"
+      - "9093:9093"
+    environment:
+      KAFKA_KRAFT_MODE: "true"  # This enables KRaft mode in Kafka.
+      KAFKA_PROCESS_ROLES: controller,broker  # Kafka acts as both broker and controller.
+      KAFKA_NODE_ID: 1  # A unique ID for this Kafka instance.
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"  # Defines the controller voters.
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LOG_DIRS: /var/lib/kafka/data  # Where Kafka stores its logs.
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"  # Kafka will automatically create topics if needed.
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1  # Since we’re running one broker, one replica is enough.
+      KAFKA_LOG_RETENTION_HOURS: 168  # Keep logs for 7 days.
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0  # No delay for consumer rebalancing.
+      CLUSTER_ID: "Mk3OEYBSD34fcwNTJENDM2Qk"  # A unique ID for the Kafka cluster.
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - kafka_data:/var/lib/kafka/data  # Store Kafka logs on your local machine.
+      - kafka_secrets:/etc/kafka/secrets  # Store Kafka secrets on your local machine.
+    networks:
+      - infra_network
+
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-cluster-ui
+    ports:
+      - "8082:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+    depends_on:
+      - kafka
+    networks:
+      - infra_network
+
+
+networks:
+  infra_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  sqlserver_data:
+    driver: local
+  mongo_data:
+    driver: local
+  mongo_configdb:
+    driver: local
+  kafka_data:
+    driver: local
+  kafka_secrets:
+    driver: local
